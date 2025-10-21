@@ -1354,11 +1354,16 @@ def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
 
 st.title("Estadísticas Basquet")
 
+# --- MOSTRAR ERROR DE CARGA SI LO HUBO ---
+if error_carga:
+    st.error(error_carga)
+    st.stop() # Detener si el Excel falló
+
 # --- INICIO BLOQUE 2: PEGAR ESTE BLOQUE NUEVO AQUÍ ---
 with st.expander("🔍 Buscar un Partido para copiar ID"):
 
     # Solo mostrar filtros si el índice (Excel) se cargó correctamente
-    if 'df_indice' in locals() and not df_indice.empty:
+    if df_indice is not None and not df_indice.empty:
         # Creamos un dataframe temporal que se irá filtrando
         df_filtrado = df_indice.copy()
 
@@ -1918,7 +1923,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                         except Exception:
                             pass
 
-                        diff_chart = diff_chart.add_params(brush)
+                        diff_chart = diff_chart.add_selection(brush) #.add_params(brush)
                         # Mostrar ambos gráficos en la misma línea (layout original)
                         diff_chart_full = diff_chart
                         col_a, col_b = st.columns(2)
@@ -2926,7 +2931,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     # Colorear estrella con color del equipo
                     def style_star(df: pd.DataFrame, color_hex: str):
                         if isinstance(df, pd.DataFrame) and 'Titular' in df.columns:
-                            return df.style.applymap(lambda v: f'color: {color_hex}' if str(v) == '⭐' else '', subset=['Titular'])
+                            return df.style.map(lambda v: f'color: {color_hex}' if str(v) == '⭐' else '', subset=['Titular'])
                         return df
                     # (Eliminado post-proceso de fueguito en jugadores)
                     styled_loc = style_star(tbl_loc, color_local)
