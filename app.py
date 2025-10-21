@@ -1,3 +1,4 @@
+import os
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,7 +27,7 @@ ESTADISTICAS_URL = "https://appaficioncabb.indalweb.net/envivonavegador/estadist
 
 # --- INICIO BLOQUE 1: CARGA DE DATOS ---
 
-@st.cache_data # Cache para no recargar el Excel constantemente
+@st.cache_data
 def cargar_indice_partidos() -> Tuple[Optional[pd.DataFrame], List, List, List, List, List, List, Optional[str]]:
     """
     Carga y preprocesa el archivo Excel.
@@ -34,21 +35,59 @@ def cargar_indice_partidos() -> Tuple[Optional[pd.DataFrame], List, List, List, 
              o None como string de error si todo OK.
     """
     error_msg = None
+    excel_path = "No calculado aún" # Inicializar
+    script_dir = "No calculado aún" # Inicializar
+    cwd = os.getcwd() # Directorio de trabajo actual
+
+    print(f"\n--- DEBUG: CARGANDO EXCEL ---") # Separador
+    print(f"Directorio de trabajo actual (cwd): {cwd}")
+
     try:
-        # Asegúrate de que la ruta sea accesible desde donde ejecutas streamlit
-        df_indice = pd.read_excel("partidos/designacionesfecha-excel.xlsx")
+        # --- CONSTRUIR RUTA ABSOLUTA AL EXCEL ---
+        try:
+            # __file__ contiene la ruta del script actual (app.py)
+            print(f"Valor de __file__: {__file__}")
+            script_dir = os.path.dirname(__file__)
+            print(f"Directorio del script (calculado desde __file__): {script_dir}")
+        except NameError:
+            # Fallback si __file__ no está definido (raro al correr como script)
+            script_dir = cwd
+            print(f"__file__ no definido, usando cwd como directorio del script: {script_dir}")
+
+        relative_path = "partidos/designacionesfecha-excel.xlsx"
+        print(f"Ruta relativa usada: {relative_path}")
+
+        excel_path = os.path.join(script_dir, relative_path)
+        print(f"Ruta completa calculada (excel_path): {excel_path}") # <-- ¡CLAVE!
+
+        # Verificar si el archivo existe ANTES de intentar leerlo
+        if not os.path.exists(excel_path):
+             print(f"¡ALERTA! El archivo NO existe en la ruta calculada: {excel_path}")
+             raise FileNotFoundError(f"Archivo no encontrado en {excel_path}")
+
+        print(f"Intentando leer: {excel_path}")
+        df_indice = pd.read_excel(excel_path)
+        print(f"¡Éxito al leer el Excel!")
+
     except FileNotFoundError:
-        error_msg = "Error: No se encontró el archivo 'partidos/designacionesfecha-excel.xlsx'. Asegúrate de que la ruta sea correcta."
+        error_msg = (f"Error: No se encontró el archivo Excel en la ruta esperada: '{excel_path}'. "
+                     f"Asegúrate de que '{relative_path}' existe en la ubicación correcta relativa a app.py.")
+        st.error(error_msg) # Mostrar en la app
+        print(f"ERROR FileNotFound: {error_msg}") # Mostrar en la terminal
         return None, [], [], [], [], [], [], error_msg
     except Exception as e:
-        error_msg = f"Error inesperado al leer el Excel: {e}"
+        error_msg = f"Error inesperado al leer el Excel desde '{excel_path}': {e}"
+        st.error(error_msg) # Mostrar en la app
+        print(f"ERROR Inesperado: {error_msg}") # Mostrar en la terminal
         return None, [], [], [], [], [], [], error_msg
 
-    # --- Pre-procesamiento para filtros (dentro de try/except) ---
+    print(f"--- FIN DEBUG: CARGANDO EXCEL ---\n")
+
+    # --- Pre-procesamiento para filtros (sin cambios aquí) ---
     try:
         # 1. Fechas y Año
         df_indice['FECHA'] = pd.to_datetime(df_indice['FECHA'], format='%d/%m/%Y', errors='coerce')
-        df_indice.dropna(subset=['FECHA'], inplace=True) # Eliminar filas con fechas inválidas
+        df_indice.dropna(subset=['FECHA'], inplace=True)
         if df_indice.empty:
              raise ValueError("No quedaron filas válidas después de procesar las fechas.")
         df_indice['Año'] = df_indice['FECHA'].dt.year.astype(int)
@@ -58,27 +97,48 @@ def cargar_indice_partidos() -> Tuple[Optional[pd.DataFrame], List, List, List, 
              raise KeyError("La columna 'LOCAL/VISITANTE' no se encuentra en el Excel.")
         df_indice['LOCAL/VISITANTE'] = df_indice['LOCAL/VISITANTE'].astype(str)
         split_teams = df_indice['LOCAL/VISITANTE'].str.split(' - ', n=1, expand=True)
-        df_indice['Equipo_Local'] = split_teams[0].str.strip()
-        df_indice['Equipo_Visitante'] = split_teams[1].str.strip() if split_teams.shape[1] > 1 else None
-        df_indice['Equipo_Local'] = df_indice['Equipo_Local'].fillna("")
-        df_indice['Equipo_Visitante'] = df_indice['Equipo_Visitante'].fillna("")
 
-        # 3. Listas únicas (convertir a string para evitar errores con tipos mixtos)
+        # Asignar Equipo_Local (siempre existe la columna 0)
+        df_indice['Equipo_Local'] = split_teams[0].str.strip().fillna("").astype(str)
+
+        # Asignar Equipo_Visitante usando np.where para manejar NaNs fila por fila
+        if split_teams.shape[1] > 1:
+            # Condición: no es nulo en la columna 1
+            condition = pd.notna(split_teams[1])
+            # Valor si no es nulo: el string limpiado
+            value_if_true = split_teams[1].str.strip()
+            # Valor si es nulo: un string vacío
+            value_if_false = ""
+            df_indice['Equipo_Visitante'] = np.where(condition, value_if_true, value_if_false)
+        else:
+            # Si la columna 1 no existe en absoluto, llenar con strings vacíos
+            df_indice['Equipo_Visitante'] = ""
+
+        # Asegurar que la columna sea tipo string después de np.where
+        df_indice['Equipo_Visitante'] = df_indice['Equipo_Visitante'].astype(str)
+
+
+        # 3. Listas únicas (sin cambios aquí)
         lista_anios = sorted(df_indice['Año'].unique(), reverse=True)
+        # ... (resto del código de listas únicas igual que antes) ...
         lista_competencias = sorted(df_indice['COMPETENCIA'].astype(str).unique())
         lista_categorias = sorted(df_indice['CATEGORÍA'].astype(str).unique())
         lista_fases = sorted(df_indice['FASE'].astype(str).unique())
-        lista_grupos = sorted(df_indice['GRUPO'].astype(str).unique()) # Larga, pero se filtrará
+        lista_grupos = sorted(df_indice['GRUPO'].astype(str).unique())
 
         equipos_locales = df_indice['Equipo_Local'].unique()
         equipos_visitantes = df_indice['Equipo_Visitante'].unique()
-        lista_equipos_total = sorted(list(set(e for e in equipos_locales if e) | set(e for e in equipos_visitantes if e)))
+        set_equipos = set(e for e in equipos_locales if pd.notna(e) and str(e).strip() != "") | \
+                      set(e for e in equipos_visitantes if pd.notna(e) and str(e).strip() != "")
+        lista_equipos_total = sorted(list(set_equipos))
+
 
         return df_indice, lista_anios, lista_competencias, lista_categorias, lista_fases, lista_grupos, lista_equipos_total, None # Ningún error
     except Exception as e:
         error_msg = f"Error al procesar columnas del Excel: {e}"
+        # st.error(error_msg) # Descomenta si quieres ver el error en la app
+        print(f"ERROR Procesando Columnas: {error_msg}") # Mostrar en la terminal
         return None, [], [], [], [], [], [], error_msg
-
 # --- Llamar a la función de carga ---
 (df_indice,
  LISTA_ANIOS,
